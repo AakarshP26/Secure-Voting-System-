@@ -5,15 +5,12 @@ Usage:
     python3.12 src/server.py --mode dh
     python3.12 src/server.py --mode ml_kem
     python3.12 src/server.py --mode hybrid
+    python3.12 src/server.py --mode dh --cache-params
 
-Architecture:
-    1. Listen on TCP port.
-    2. For each new connection (in its own thread):
-       a. Read 1-byte mode marker (validated against server config)
-       b. Run pluggable key exchange handler → raw shared secret
-       c. Derive AES-256 key via HKDF-SHA256
-       d. Receive AES-GCM-encrypted vote, decrypt, tally
-       e. Send encrypted ACK back
+The --cache-params flag (only meaningful for --mode dh) generates the
+DH parameters ONCE at server startup and reuses them for every
+connection. This matches realistic deployment where parameters are
+shared across many sessions.
 
 Author: Aakarsh Prabhu
 """
@@ -24,7 +21,6 @@ import sys
 import threading
 from collections import Counter
 
-# Allow `from crypto...` and `from utils...` imports
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -64,10 +60,11 @@ def _print_tally() -> None:
 # Per-client handler (runs in its own thread)
 # ---------------------------------------------------------------------
 
-def handle_client(conn: socket.socket, addr: tuple, mode: str) -> None:
+def handle_client(conn: socket.socket, addr: tuple, mode: str,
+                  cached_dh_params=None) -> None:
     print(f"[+] New connection from {addr} (mode={mode})")
     try:
-        # 1. Read 1-byte mode marker from client and validate.
+        # 1. Read mode marker from client and validate.
         client_mode_byte = recv_msg(conn).decode("utf-8")
         if client_mode_byte != mode:
             print(f"[!] Mode mismatch: server={mode!r}, client={client_mode_byte!r}")
@@ -76,6 +73,9 @@ def handle_client(conn: socket.socket, addr: tuple, mode: str) -> None:
 
         # 2. Run the key exchange.
         handler = get_handler(mode)
+        # If we pre-generated DH params at startup, attach them to the handler.
+        if mode == "dh" and cached_dh_params is not None:
+            handler.cached_params = cached_dh_params
         shared_secret = handler.server_side(conn)
         print(f"[OK] {addr} key exchange complete ({len(shared_secret)} bytes raw secret)")
 
@@ -109,18 +109,27 @@ def handle_client(conn: socket.socket, addr: tuple, mode: str) -> None:
 # Server main loop
 # ---------------------------------------------------------------------
 
-def start_server(mode: str) -> None:
+def start_server(mode: str, cache_params: bool = False) -> None:
+    # Pre-generate DH parameters once if caching is requested.
+    cached_dh_params = None
+    if mode == "dh" and cache_params:
+        from crypto.dh import generate_parameters as dh_generate_parameters
+        print("[SERVER] Pre-generating DH parameters (this may take ~30s)...")
+        cached_dh_params = dh_generate_parameters(key_size=2048)
+        print("[SERVER] DH parameters ready.")
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen(5)
-        print(f"[SERVER] Listening on {HOST}:{PORT} (mode={mode})")
+        cache_note = " (DH params cached)" if cached_dh_params else ""
+        print(f"[SERVER] Listening on {HOST}:{PORT} (mode={mode}){cache_note}")
 
         while True:
             conn, addr = s.accept()
             t = threading.Thread(
                 target=handle_client,
-                args=(conn, addr, mode),
+                args=(conn, addr, mode, cached_dh_params),
                 daemon=True,
             )
             t.start()
@@ -134,10 +143,15 @@ def main() -> None:
         required=True,
         help="Key exchange mode",
     )
+    parser.add_argument(
+        "--cache-params",
+        action="store_true",
+        help="Generate DH parameters once at startup and reuse them (DH only)",
+    )
     args = parser.parse_args()
 
     try:
-        start_server(args.mode)
+        start_server(args.mode, cache_params=args.cache_params)
     except KeyboardInterrupt:
         print("\n[SERVER] Shutting down (Ctrl+C pressed)")
         _print_tally()
