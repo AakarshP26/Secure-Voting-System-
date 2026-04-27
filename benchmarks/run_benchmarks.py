@@ -6,24 +6,16 @@ captures per-run metrics, and writes them all to a CSV file.
 
 Usage:
     python3.12 benchmarks/run_benchmarks.py --runs 30 --output benchmarks/results.csv
+    python3.12 benchmarks/run_benchmarks.py --modes dh_cached --runs 30 --output benchmarks/results_cached.csv
 
-CSV columns:
-    mode, run_id, connect_ms, handshake_ms, encrypt_send_ms,
-    ack_ms, total_ms, bytes_sent_app, bytes_received_app
-
-DESIGN NOTE
-We spawn the server fresh for each (mode, run_id) so there is no warm-up
-cache benefit and no carryover state between runs. This is the most
-honest measurement methodology, though it slows DH benchmarks the most
-(parameter regeneration each run). The paper will discuss this and also
-report a faster "warm" variant if time permits.
+The "dh_cached" pseudo-mode runs DH but launches the server with
+--cache-params for realistic deployment measurement.
 
 Author: Aakarsh Prabhu
 """
 
 import argparse
 import csv
-import os
 import socket
 import subprocess
 import sys
@@ -36,7 +28,7 @@ SERVER_SCRIPT = REPO_ROOT / "src" / "server.py"
 CLIENT_SCRIPT = REPO_ROOT / "src" / "client.py"
 PYTHON = sys.executable
 
-MODES = ["ml_kem", "hybrid", "dh"]   # Run fast modes first; DH last because slow.
+MODES = ["ml_kem", "hybrid", "dh", "dh_cached"]
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 65432
 
@@ -54,13 +46,11 @@ def wait_for_server(timeout_s: float = 60.0) -> None:
 
 
 def run_client(mode: str) -> dict:
-    """
-    Run client in --quiet mode and parse the metrics line it prints.
-    Returns the metrics dict, or raises if the client failed.
-    """
+    """Run client in --quiet mode and parse the metrics line it prints."""
+    actual_mode = "dh" if mode == "dh_cached" else mode
     proc = subprocess.run(
         [PYTHON, str(CLIENT_SCRIPT),
-         "--mode", mode,
+         "--mode", actual_mode,
          "--auto-vote", "Bob",
          "--quiet"],
         capture_output=True,
@@ -70,7 +60,6 @@ def run_client(mode: str) -> dict:
     if proc.returncode != 0:
         raise RuntimeError(f"Client failed (rc={proc.returncode}): {proc.stderr}")
 
-    # Output is a single line of key=val,key=val,...
     line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     if not line:
         raise RuntimeError(f"Client produced no metrics line. stderr: {proc.stderr}")
@@ -78,42 +67,46 @@ def run_client(mode: str) -> dict:
     metrics = {}
     for kv in line.split(","):
         k, v = kv.split("=", 1)
-        # Numeric where possible, else string.
         try:
             metrics[k] = float(v)
         except ValueError:
             metrics[k] = v
+    # Override mode field so the CSV preserves the dh_cached distinction.
+    metrics["mode"] = mode
     return metrics
 
 
 def benchmark_mode(mode: str, runs: int) -> list[dict]:
     """
     Run `runs` benchmark iterations for a single mode.
-
-    Spawns a fresh server for EACH run for clean measurements.
+    Spawns a fresh server for each run.
     """
     results = []
     for i in range(runs):
         print(f"  [{mode}] run {i + 1}/{runs} ...", end="", flush=True)
 
-        # Spawn server in background.
+        # Build server command line — dh_cached spawns DH server with --cache-params.
+        actual_mode = "dh" if mode == "dh_cached" else mode
+        server_args = [PYTHON, str(SERVER_SCRIPT), "--mode", actual_mode]
+        if mode == "dh_cached":
+            server_args.append("--cache-params")
+
         server_proc = subprocess.Popen(
-            [PYTHON, str(SERVER_SCRIPT), "--mode", mode],
+            server_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 
         try:
-            # Wait until server is ready to accept connections.
-            wait_for_server(timeout_s=120.0)
+            # For dh_cached, wait longer because the server pre-generates params at startup.
+            timeout = 120.0 if mode == "dh_cached" else 60.0
+            wait_for_server(timeout_s=timeout)
 
-            # Run the client and get metrics.
             metrics = run_client(mode)
             metrics["run_id"] = i
             results.append(metrics)
             print(f" handshake={metrics['handshake_ms']:.1f}ms, total={metrics['total_ms']:.1f}ms")
         finally:
-            # Always kill the server before the next run.
             server_proc.terminate()
             try:
                 server_proc.wait(timeout=5)
@@ -150,7 +143,6 @@ def main() -> None:
         print("\nNo results collected; aborting.")
         sys.exit(1)
 
-    # Write CSV — column set is the union of all metric keys.
     columns = ["mode", "run_id", "vote",
                "connect_ms", "handshake_ms", "encrypt_send_ms", "ack_ms",
                "total_ms", "bytes_sent_app", "bytes_received_app"]
