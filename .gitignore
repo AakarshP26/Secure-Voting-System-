@@ -209,3 +209,4 @@ __marimo__/
 # Benchmark output files (regenerated each run)
 benchmarks/results.csv
 benchmarks/results_*.csv
+benchmarks/results_all.csv
