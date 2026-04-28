@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 AES_KEY_LENGTH = 32
 
 
-def derive_aes_key(shared_secret: bytes, info: bytes = b"voting-system aes key") -> bytes:
+def derive_aes_key(shared_secret: bytes, info: bytes = b"secure-chat aes key") -> bytes:
     """
     Derive a 32-byte AES-256 key from a raw shared secret using HKDF-SHA256.
 
