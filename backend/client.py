@@ -36,15 +36,42 @@ HOST = "127.0.0.1"
 PORT = 65432
 
 
-def send_secure_message(mode: str, username: str, password: str,
-                         recipient: str, message: str,
-                         quiet: bool = False) -> dict:
+import threading
+
+def _listen_loop(s: socket.socket, aes_key: bytes, quiet: bool) -> None:
+    """Background thread to receive messages continuously."""
+    while True:
+        try:
+            raw = recv_msg(s)
+            if not raw:
+                break
+            payload = proto.decode(aes_decrypt(aes_key, raw))
+            
+            if payload.get("type") == proto.MsgType.CHAT:
+                sender = payload.get("from", "unknown")
+                print(f"\n[{sender}]: {payload.get('data')}")
+            elif payload.get("type") == proto.MsgType.ACK and not quiet:
+                status = payload.get("status")
+                ref = payload.get("ref_id", "")[:8]
+                print(f"\n[ACK] Message {ref} -> {status}")
+            elif payload.get("type") == proto.MsgType.ERROR:
+                print(f"\n[SERVER ERROR] {payload.get('data')}")
+        except Exception as e:
+            if not quiet:
+                print(f"\n[CLIENT] Disconnected: {e}")
+            break
+
+
+def run_chat_client(mode: str, username: str, password: str,
+                    recipient: str, message: str = None,
+                    quiet: bool = False) -> dict | None:
     """
-    Full secure message flow with authentication.
-    Returns timing + byte metrics dict.
+    Full secure message flow. If 'message' is provided, sends one and returns metrics.
+    If 'message' is None, enters an interactive REPL loop.
     """
     bytes_sent = 0
     bytes_recv = 0
+    seq_counter = 1
 
     def log(msg: str) -> None:
         if not quiet:
@@ -52,7 +79,8 @@ def send_secure_message(mode: str, username: str, password: str,
 
     t0 = time.perf_counter_ns()
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         log(f"[CLIENT] Connecting to {HOST}:{PORT} (mode={mode})...")
         s.connect((HOST, PORT))
         t_connected = time.perf_counter_ns()
@@ -89,40 +117,69 @@ def send_secure_message(mode: str, username: str, password: str,
         log(f"[CLIENT] Authenticated. Token: {token[:12]}...")
         t_auth_done = time.perf_counter_ns()
 
-        # ── Send chat message ─────────────────────────────────────
-        chat_payload = proto.build_chat(username, recipient, message)
-        chat_enc = aes_encrypt(aes_key, proto.encode(chat_payload))
-        send_msg(s, chat_enc)
-        bytes_sent += 4 + len(chat_enc)
-        t_send_done = time.perf_counter_ns()
-        log(f"[CLIENT] Sent message ({len(chat_enc)}B encrypted)")
+        # ── Single Message Mode (for benchmarks) ──────────────────
+        if message is not None:
+            chat_payload = proto.build_chat(username, recipient, message, seq=seq_counter)
+            chat_enc = aes_encrypt(aes_key, proto.encode(chat_payload))
+            send_msg(s, chat_enc)
+            bytes_sent += 4 + len(chat_enc)
+            t_send_done = time.perf_counter_ns()
+            
+            raw_ack = recv_msg(s)
+            bytes_recv += 4 + len(raw_ack)
+            ack = proto.decode(aes_decrypt(aes_key, raw_ack))
+            t_ack = time.perf_counter_ns()
+            
+            s.close()
+            t_end = time.perf_counter_ns()
+            
+            return {
+                "mode":               mode,
+                "message_id":         chat_payload["message_id"],
+                "connect_ms":         (t_connected - t0) / 1e6,
+                "handshake_ms":       (t_kex_end - t_kex_start) / 1e6,
+                "auth_ms":            (t_auth_done - t_kex_end) / 1e6,
+                "encrypt_send_ms":    (t_send_done - t_auth_done) / 1e6,
+                "ack_ms":             (t_ack - t_send_done) / 1e6,
+                "total_ms":           (t_end - t0) / 1e6,
+                "bytes_sent_app":     bytes_sent,
+                "bytes_received_app": bytes_recv,
+            }
 
-        # ── Receive delivered ACK ─────────────────────────────────
-        raw_ack = recv_msg(s)
-        bytes_recv += 4 + len(raw_ack)
-        ack = proto.decode(aes_decrypt(aes_key, raw_ack))
-        t_ack = time.perf_counter_ns()
+        # ── Interactive Chat Mode ─────────────────────────────────
+        print(f"\n=== Chat Started as '{username}' ===")
+        print(f"Type your message and press Enter to send to '{recipient}'.")
+        print("Type '/quit' to exit.")
+        print("========================================================\n")
 
-        if ack.get("type") == proto.MsgType.ERROR:
-            print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
-            sys.exit(1)
+        # Start background listener thread
+        listener = threading.Thread(target=_listen_loop, args=(s, aes_key, quiet), daemon=True)
+        listener.start()
 
-        log(f"[CLIENT] Server ACK: status={ack.get('status')} ref={ack.get('ref_id','')[:8]}")
+        while True:
+            # Wait a brief moment so background thread prints don't clobber the prompt
+            time.sleep(0.1)
+            msg_text = input(f"[{username}]> ").strip()
+            
+            if not msg_text:
+                continue
+            if msg_text.lower() == "/quit":
+                break
 
-    t_end = time.perf_counter_ns()
+            seq_counter += 1
+            chat_payload = proto.build_chat(username, recipient, msg_text, seq=seq_counter)
+            chat_enc = aes_encrypt(aes_key, proto.encode(chat_payload))
+            send_msg(s, chat_enc)
 
-    return {
-        "mode":               mode,
-        "message_id":         chat_payload["message_id"],
-        "connect_ms":         (t_connected - t0) / 1e6,
-        "handshake_ms":       (t_kex_end - t_kex_start) / 1e6,
-        "auth_ms":            (t_auth_done - t_kex_end) / 1e6,
-        "encrypt_send_ms":    (t_send_done - t_auth_done) / 1e6,
-        "ack_ms":             (t_ack - t_send_done) / 1e6,
-        "total_ms":           (t_end - t0) / 1e6,
-        "bytes_sent_app":     bytes_sent,
-        "bytes_received_app": bytes_recv,
-    }
+    except Exception as e:
+        print(f"[!] Client error: {e}")
+    finally:
+        try:
+            s.close()
+        except:
+            pass
+    
+    return None
 
 
 def main() -> None:
@@ -130,13 +187,13 @@ def main() -> None:
     parser.add_argument("--mode", choices=["dh", "ml_kem", "hybrid"], required=True)
     parser.add_argument("--user",     required=True, help="Username")
     parser.add_argument("--password", required=True, help="Password")
-    parser.add_argument("--message",  required=True, help="Message to send")
+    parser.add_argument("--message",  help="Single message to send (skips interactive mode)")
     parser.add_argument("--to",       default="server", help="Recipient username")
     parser.add_argument("--quiet",    action="store_true")
     args = parser.parse_args()
 
     try:
-        metrics = send_secure_message(
+        metrics = run_chat_client(
             mode=args.mode,
             username=args.user,
             password=args.password,
@@ -144,11 +201,8 @@ def main() -> None:
             message=args.message,
             quiet=args.quiet,
         )
-        if args.quiet:
+        if args.quiet and metrics:
             print(",".join(f"{k}={v}" for k, v in metrics.items()))
-    except ConnectionRefusedError:
-        print("[ERROR] Server not reachable.", file=sys.stderr)
-        sys.exit(1)
     except KeyboardInterrupt:
         print("\n[CLIENT] Cancelled.")
 

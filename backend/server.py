@@ -44,6 +44,7 @@ from utils.protocol import send_msg, recv_msg
 import protocol as proto
 import db
 import auth
+import router
 
 
 HOST = "127.0.0.1"
@@ -106,52 +107,97 @@ def handle_client(conn: socket.socket, addr: tuple, mode: str,
         send_msg(conn, aes_encrypt(aes_key, proto.encode(ack_with_token)))
         print(f"[AUTH] {addr} authenticated as '{username}'")
 
-        # ── 4. Receive and process CHAT message ───────────────────
-        raw_msg = recv_msg(conn)
-        payload = proto.decode(aes_decrypt(aes_key, raw_msg))
+        # Register in router
+        router.register(username, conn, aes_key)
 
-        # Schema validation
-        err = proto.validate(payload)
-        if err:
-            send_msg(conn, aes_encrypt(aes_key, proto.encode(
-                proto.build_error(proto.ErrCode.INVALID_SCHEMA, err))))
-            return
+        # Drain offline queue
+        pending = db.get_pending_messages(username)
+        for p in pending:
+            p_payload = proto.build_chat(p["sender"], username, p["plaintext"])
+            p_payload["message_id"] = p["message_id"]  # retain original ID
+            p_payload["timestamp"] = p["created_at"]
+            try:
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(p_payload)))
+                db.update_delivery_status(p["message_id"], "delivered")
+                print(f"[ROUTER] Delivered offline message {p['message_id'][:8]} to {username}")
+            except Exception as e:
+                print(f"[!] Failed to deliver offline message to {username}: {e}")
+                break
 
-        # Timestamp window check (replay protection layer 1)
-        age = time.time() - payload["timestamp"]
-        if age > TIMESTAMP_WINDOW or age < -30:   # allow 30s clock skew
-            send_msg(conn, aes_encrypt(aes_key, proto.encode(
-                proto.build_error(proto.ErrCode.EXPIRED,
-                                  f"Message age {age:.1f}s exceeds window"))))
-            return
+        # ── 4. Message Loop ───────────────────────────────────────
+        while True:
+            try:
+                raw_msg = recv_msg(conn)
+            except ConnectionError:
+                break
 
-        # message_id uniqueness check (replay protection layer 2)
-        msg_id = payload["message_id"]
-        if db.is_replay(msg_id):
-            send_msg(conn, aes_encrypt(aes_key, proto.encode(
-                proto.build_error(proto.ErrCode.REPLAY,
-                                  f"message_id {msg_id} already seen"))))
-            return
+            payload = proto.decode(aes_decrypt(aes_key, raw_msg))
 
-        # Mark seen and persist
-        db.record_seen(msg_id)
-        db.insert_message(
-            message_id=msg_id,
-            sender=payload["from"],
-            recipient=payload.get("to", "server"),
-            plaintext=payload["data"],
-            created_at=payload["timestamp"],
-        )
-        print(f"[MSG] {username} -> {payload.get('to','server')}: {payload['data']!r}")
+            err = proto.validate(payload)
+            if err:
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_error(proto.ErrCode.INVALID_SCHEMA, err))))
+                continue
 
-        # Send delivered ACK
-        db.update_delivery_status(msg_id, "delivered")
-        send_msg(conn, aes_encrypt(aes_key, proto.encode(
-            proto.build_ack(msg_id, status="delivered"))))
+            # Timestamp window check
+            age = time.time() - payload["timestamp"]
+            if age > TIMESTAMP_WINDOW or age < -30:
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_error(proto.ErrCode.EXPIRED,
+                                      f"Message age {age:.1f}s exceeds window"))))
+                continue
+
+            # Replay dedup
+            msg_id = payload["message_id"]
+            if db.is_replay(msg_id):
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_error(proto.ErrCode.REPLAY,
+                                      f"message_id {msg_id} already seen"))))
+                continue
+
+            db.record_seen(msg_id)
+            recipient = payload.get("to", "server")
+            
+            db.insert_message(
+                message_id=msg_id,
+                sender=payload["from"],
+                recipient=recipient,
+                plaintext=payload["data"],
+                created_at=payload["timestamp"],
+            )
+
+            print(f"[MSG] {username} -> {recipient}: {payload['data']!r}")
+
+            if recipient == "server":
+                db.update_delivery_status(msg_id, "delivered")
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_ack(msg_id, status="delivered"))))
+                continue
+
+            # Route to recipient
+            rec_session = router.get_connection(recipient)
+            if rec_session:
+                rec_conn, rec_key = rec_session
+                try:
+                    send_msg(rec_conn, aes_encrypt(rec_key, proto.encode(payload)))
+                    db.update_delivery_status(msg_id, "delivered")
+                    send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                        proto.build_ack(msg_id, status="delivered"))))
+                except Exception as e:
+                    print(f"[-] Failed to forward to {recipient}: {e}")
+                    send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                        proto.build_ack(msg_id, status="sent"))))
+            else:
+                # Offline delivery
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_ack(msg_id, status="sent"))))
 
     except Exception as e:
         print(f"[!] Error with {addr}: {type(e).__name__}: {e}")
     finally:
+        # Unregister from router if username is known
+        if 'username' in locals():
+            router.unregister(username)
         conn.close()
         print(f"[-] Closed {addr}")
 

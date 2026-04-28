@@ -58,10 +58,11 @@ class ErrCode:
 # Builder helpers (construct valid dicts — no serialisation here)
 # ------------------------------------------------------------------
 
-def build_chat(sender: str, recipient: str, data: str) -> dict:
+def build_chat(sender: str, recipient: str, data: str, seq: int = 0) -> dict:
     """Build a chat message payload."""
     return {
         "message_id": secrets.token_hex(16),
+        "seq":        seq,
         "timestamp":  time.time(),
         "type":       MsgType.CHAT,
         "from":       sender,
@@ -157,6 +158,9 @@ def validate(payload: dict) -> Optional[str]:
 
     if not isinstance(payload["timestamp"], (int, float)):
         return "timestamp must be a numeric Unix epoch value"
+
+    if "seq" in payload and not isinstance(payload["seq"], int):
+        return "seq must be an integer"
 
     if payload["type"] not in vars(MsgType).values():
         return f"Unknown message type: {payload['type']!r}"

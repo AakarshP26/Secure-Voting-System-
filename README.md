@@ -18,8 +18,8 @@
 | **Phase 0** | ✅ Complete | Repository restructure — `backend/` scaffold, imports fixed |
 | **Phase 1** | ✅ Complete | JSON protocol layer — structured payloads, schema validation |
 | **Phase 2** | ✅ Complete | SQLite persistence, bcrypt auth, session tokens, replay protection |
-| **Phase 3** | 🔄 In progress | Message router, ACK system, offline queue |
-| **Phase 4** | ⏳ Pending | FastAPI + WebSocket migration |
+| **Phase 3** | ✅ Complete | Message router, ACK system, offline queue, interactive client |
+| **Phase 4** | 🔄 In progress | FastAPI + WebSocket migration |
 | **Phase 5** | ⏳ Pending | Streamlit frontend + Crypto Inspector dashboard |
 | **Phase 6** | ⏳ Pending | Docker + deployment |
 
