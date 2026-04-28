@@ -1,17 +1,18 @@
 """
-client.py — Secure Chat Client (backend)
+client.py — Secure Chat Client (backend) — Phase 2
 
-Pivoted from: Secure Voting System
-Now: Sends a structured JSON chat message over a post-quantum secure channel.
+Flow:
+  1. TCP connect
+  2. Send mode marker
+  3. Key exchange (DH / ML-KEM / Hybrid)
+  4. Send encrypted AUTH payload (username + password)
+  5. Receive encrypted token ACK
+  6. Send encrypted CHAT payload (structured JSON)
+  7. Receive encrypted delivered ACK
 
 Usage:
-    python backend/client.py --mode dh --message "Hello"
-    python backend/client.py --mode ml_kem --message "Hello" --quiet
-    python backend/client.py --mode hybrid --message "Hello" --from alice
-
---message MSG   The chat message to send.
---from    NAME  Sender display name (default: "user").
---quiet         Suppress human-friendly logs; print one CSV-style metrics line.
+    python backend/client.py --mode hybrid --user alice --password secret --message "Hello"
+    python backend/client.py --mode ml_kem --user bob --password pw --message "Hi" --quiet
 
 Author: Aakarsh Prabhu
 """
@@ -21,8 +22,6 @@ import socket
 import sys
 import os
 import time
-import json
-import secrets
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,32 +29,22 @@ from crypto.kex_handlers import get_handler
 from crypto.kdf import derive_aes_key
 from crypto.aes import encrypt as aes_encrypt, decrypt as aes_decrypt
 from utils.protocol import send_msg, recv_msg
+import protocol as proto
 
 
 HOST = "127.0.0.1"
 PORT = 65432
 
 
-def get_message_from_user() -> str:
-    """Interactive message prompt."""
-    return input("Enter your message: ").strip()
-
-
-def send_message(mode: str, sender: str, message: str, quiet: bool = False) -> dict:
+def send_secure_message(mode: str, username: str, password: str,
+                         recipient: str, message: str,
+                         quiet: bool = False) -> dict:
     """
-    Run the full secure message flow. Returns timing/byte metrics dict.
-
-    Metrics returned:
-        connect_ms        - TCP connect time
-        handshake_ms      - key exchange time
-        encrypt_send_ms   - time from encrypting to sending
-        ack_ms            - waiting for + decrypting the ack
-        total_ms          - end-to-end
-        bytes_sent_app    - approximate bytes the client transmitted
-        bytes_received_app - approximate bytes the client received
+    Full secure message flow with authentication.
+    Returns timing + byte metrics dict.
     """
     bytes_sent = 0
-    bytes_received = 0
+    bytes_recv = 0
 
     def log(msg: str) -> None:
         if not quiet:
@@ -68,96 +57,97 @@ def send_message(mode: str, sender: str, message: str, quiet: bool = False) -> d
         s.connect((HOST, PORT))
         t_connected = time.perf_counter_ns()
 
-        # Send mode marker.
+        # ── Mode marker ───────────────────────────────────────────
         mode_bytes = mode.encode("utf-8")
         send_msg(s, mode_bytes)
         bytes_sent += 4 + len(mode_bytes)
 
-        # Run key exchange.
+        # ── Key exchange ──────────────────────────────────────────
         handler = get_handler(mode)
-        t_handshake_start = time.perf_counter_ns()
+        t_kex_start = time.perf_counter_ns()
         shared_secret = handler.client_side(s)
-        t_handshake_end = time.perf_counter_ns()
-        log(f"[OK] Key exchange complete ({len(shared_secret)} bytes raw secret)")
-
-        # Derive AES key.
+        t_kex_end = time.perf_counter_ns()
         aes_key = derive_aes_key(shared_secret)
+        log(f"[OK] Key exchange done ({len(shared_secret)}B raw secret)")
 
-        # Build structured JSON payload.
-        payload = {
-            "message_id": secrets.token_hex(16),
-            "timestamp": time.time(),
-            "type": "chat",
-            "from": sender,
-            "to": "server",
-            "data": message,
-        }
-        payload_bytes = json.dumps(payload).encode("utf-8")
+        # ── Authentication ────────────────────────────────────────
+        auth_payload = proto.build_auth(username, password)
+        auth_enc = aes_encrypt(aes_key, proto.encode(auth_payload))
+        send_msg(s, auth_enc)
+        bytes_sent += 4 + len(auth_enc)
+        log(f"[CLIENT] Sent AUTH for user '{username}'")
 
-        # Encrypt and send.
-        ciphertext = aes_encrypt(aes_key, payload_bytes)
-        t_encrypt_done = time.perf_counter_ns()
-        send_msg(s, ciphertext)
-        bytes_sent += 4 + len(ciphertext)
+        raw_auth_ack = recv_msg(s)
+        bytes_recv += 4 + len(raw_auth_ack)
+        auth_ack = proto.decode(aes_decrypt(aes_key, raw_auth_ack))
+
+        if auth_ack.get("type") == proto.MsgType.ERROR:
+            print(f"[ERROR] Auth failed: {auth_ack.get('data')}", file=sys.stderr)
+            sys.exit(1)
+
+        token = auth_ack.get("token", "")
+        log(f"[CLIENT] Authenticated. Token: {token[:12]}...")
+        t_auth_done = time.perf_counter_ns()
+
+        # ── Send chat message ─────────────────────────────────────
+        chat_payload = proto.build_chat(username, recipient, message)
+        chat_enc = aes_encrypt(aes_key, proto.encode(chat_payload))
+        send_msg(s, chat_enc)
+        bytes_sent += 4 + len(chat_enc)
         t_send_done = time.perf_counter_ns()
-        log(f"[CLIENT] Sent encrypted message ({len(ciphertext)} bytes payload)")
+        log(f"[CLIENT] Sent message ({len(chat_enc)}B encrypted)")
 
-        # Receive and decrypt ACK.
-        ack_blob = recv_msg(s)
-        bytes_received += 4 + len(ack_blob)
-        ack = json.loads(aes_decrypt(aes_key, ack_blob).decode("utf-8"))
+        # ── Receive delivered ACK ─────────────────────────────────
+        raw_ack = recv_msg(s)
+        bytes_recv += 4 + len(raw_ack)
+        ack = proto.decode(aes_decrypt(aes_key, raw_ack))
         t_ack = time.perf_counter_ns()
-        log(f"[CLIENT] Server ACK: status={ack.get('status')} id={ack.get('message_id')}")
+
+        if ack.get("type") == proto.MsgType.ERROR:
+            print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
+            sys.exit(1)
+
+        log(f"[CLIENT] Server ACK: status={ack.get('status')} ref={ack.get('ref_id','')[:8]}")
 
     t_end = time.perf_counter_ns()
 
-    metrics = {
-        "mode": mode,
-        "message_id": payload["message_id"],
-        "connect_ms": (t_connected - t0) / 1e6,
-        "handshake_ms": (t_handshake_end - t_handshake_start) / 1e6,
-        "encrypt_send_ms": (t_send_done - t_handshake_end) / 1e6,
-        "ack_ms": (t_ack - t_send_done) / 1e6,
-        "total_ms": (t_end - t0) / 1e6,
-        "bytes_sent_app": bytes_sent,
-        "bytes_received_app": bytes_received,
+    return {
+        "mode":               mode,
+        "message_id":         chat_payload["message_id"],
+        "connect_ms":         (t_connected - t0) / 1e6,
+        "handshake_ms":       (t_kex_end - t_kex_start) / 1e6,
+        "auth_ms":            (t_auth_done - t_kex_end) / 1e6,
+        "encrypt_send_ms":    (t_send_done - t_auth_done) / 1e6,
+        "ack_ms":             (t_ack - t_send_done) / 1e6,
+        "total_ms":           (t_end - t0) / 1e6,
+        "bytes_sent_app":     bytes_sent,
+        "bytes_received_app": bytes_recv,
     }
-    return metrics
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Secure chat client")
-    parser.add_argument(
-        "--mode",
-        choices=["dh", "ml_kem", "hybrid"],
-        required=True,
-        help="Key exchange mode",
-    )
-    parser.add_argument(
-        "--message",
-        help="Message to send (skips interactive prompt)",
-    )
-    parser.add_argument(
-        "--from",
-        dest="sender",
-        default="user",
-        help="Sender display name",
-    )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress logs; print one machine-readable metrics line",
-    )
+    parser.add_argument("--mode", choices=["dh", "ml_kem", "hybrid"], required=True)
+    parser.add_argument("--user",     required=True, help="Username")
+    parser.add_argument("--password", required=True, help="Password")
+    parser.add_argument("--message",  required=True, help="Message to send")
+    parser.add_argument("--to",       default="server", help="Recipient username")
+    parser.add_argument("--quiet",    action="store_true")
     args = parser.parse_args()
 
     try:
-        message = args.message if args.message else get_message_from_user()
-        metrics = send_message(args.mode, args.sender, message, quiet=args.quiet)
-
+        metrics = send_secure_message(
+            mode=args.mode,
+            username=args.user,
+            password=args.password,
+            recipient=args.to,
+            message=args.message,
+            quiet=args.quiet,
+        )
         if args.quiet:
             print(",".join(f"{k}={v}" for k, v in metrics.items()))
     except ConnectionRefusedError:
-        print("[ERROR] Could not connect to the server. Is it running?", file=sys.stderr)
+        print("[ERROR] Server not reachable.", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n[CLIENT] Cancelled.")
