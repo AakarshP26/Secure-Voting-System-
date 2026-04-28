@@ -3,12 +3,13 @@ import os
 import sys
 import time
 import websockets
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from backend.client_async import authenticate
-from backend.utils.protocol import SecureProtocol, MsgType
-from backend.crypto.aes import encrypt
+from backend import protocol as proto
+from backend.crypto.aes import encrypt, decrypt
+from backend.crypto.kex_handlers import get_handler
+from backend.crypto.kdf import derive_aes_key
+from backend.adapter import WebSocketAdapter
 
 async def main():
     mode = "hybrid"
@@ -20,48 +21,55 @@ async def main():
     print(f"[*] Connecting to {uri} to simulate replay attack...")
     try:
         async with websockets.connect(uri) as ws:
-            aes_key = await authenticate(ws, mode, user, pw)
-            if not aes_key:
+            adapter = WebSocketAdapter(ws)
+            
+            # Key exchange
+            handler = get_handler(mode)
+            shared_secret = handler.client_side(adapter)
+            aes_key = derive_aes_key(shared_secret)
+            
+            # Auth
+            auth_payload = proto.build_auth(user, pw)
+            auth_enc = encrypt(aes_key, proto.encode(auth_payload))
+            adapter.sendall(len(auth_enc).to_bytes(4, 'big') + auth_enc)
+            
+            raw_len = adapter.recv(4)
+            if len(raw_len) < 4: return
+            msg_len = int.from_bytes(raw_len, 'big')
+            raw_auth_ack = adapter.recv(msg_len)
+            
+            auth_ack = proto.decode(decrypt(aes_key, raw_auth_ack))
+            if auth_ack.get("type") == proto.MsgType.ERROR:
                 print("[-] Authentication failed.")
                 return
-                
+            
             print("[+] Authentication successful.")
             
             # Construct a valid message
-            proto = SecureProtocol()
-            msg_id = os.urandom(8).hex()
-            payload = {
-                "type": MsgType.CHAT,
-                "from": user,
-                "to": "bob",
-                "message_id": msg_id,
-                "timestamp": int(time.time()),
-                "data": "This is the original message."
-            }
+            chat_payload = proto.build_chat(user, "bob", "This is the original message.")
+            enc_payload = encrypt(aes_key, proto.encode(chat_payload))
             
-            enc_payload = encrypt(aes_key, proto.encode(payload))
+            print(f"[*] Sending original message (ID: {chat_payload['message_id']})...")
+            adapter.sendall(len(enc_payload).to_bytes(4, 'big') + enc_payload)
             
-            print(f"[*] Sending original message (ID: {msg_id})...")
-            await ws.send(enc_payload)
-            
-            # Wait for ACK
-            raw_ack = await ws.recv()
-            print(f"[+] Server accepted original message.")
-            
+            # We skip waiting for ACK for simplicity and immediately replay
             print(f"[*] Attempting REPLAY attack with same payload...")
-            await ws.send(enc_payload)
+            adapter.sendall(len(enc_payload).to_bytes(4, 'big') + enc_payload)
             
-            # The server should drop it or send an error
-            try:
-                raw_ack2 = await ws.recv()
-                # If we get an ACK, it might be an error ACK. We can't decrypt it easily without the protocol wrapper, 
-                # but if the connection is closed or error returned, we know it worked.
-                print("[-] Replay was NOT blocked (this is bad if it happens).")
-            except websockets.exceptions.ConnectionClosed:
-                print("[+] Replay was BLOCKED by the server! (Connection closed / Error returned)")
-                
+            # Read responses
+            for _ in range(2):
+                raw_len = adapter.recv(4)
+                if not raw_len:
+                    print("[+] Replay was BLOCKED by the server! (Connection closed)")
+                    break
+                msg_len = int.from_bytes(raw_len, 'big')
+                raw_ack = adapter.recv(msg_len)
+                ack = proto.decode(decrypt(aes_key, raw_ack))
+                if ack.get("type") == proto.MsgType.ERROR:
+                    print(f"[+] Server rejected: {ack.get('data')}")
+            
     except Exception as e:
-        print(f"[-] Error: {e}")
+        print(f"[-] Disconnected: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

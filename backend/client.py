@@ -117,7 +117,8 @@ def run_chat_client(mode: str, username: str, password: str,
 
         if auth_ack.get("type") == proto.MsgType.ERROR:
             print(f"[ERROR] Auth failed: {auth_ack.get('data')}", file=sys.stderr)
-            sys.exit(1)
+            s.close()
+            return None
 
         token = auth_ack.get("token", "")
         log(f"[CLIENT] Authenticated. Token: {token[:12]}...")
@@ -141,7 +142,8 @@ def run_chat_client(mode: str, username: str, password: str,
                 
                 if ack.get("type") == proto.MsgType.ERROR:
                     print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
-                    sys.exit(1)
+                    s.close()
+                    return None
                 
                 if ack.get("type") == proto.MsgType.ACK and ack.get("ref_id") == chat_payload["message_id"]:
                     t_ack = time.perf_counter_ns()

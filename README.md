@@ -17,6 +17,7 @@ This project proves that migrating to post-quantum cryptography is completely vi
 ## 🏗️ Architecture & Technical Highlights
 * **Asynchronous Backend**: Built with FastAPI and `websockets` for high-concurrency event loops.
 * **Synchronous Crypto Adapter**: The heavy, CPU-bound cryptographic operations (AES-GCM, Kyber matrix math) are completely isolated from the async event loop using a custom `WebSocketAdapter` and threadpool pattern.
+* **Server-Trusted Transport**: The architecture is "Server-Trusted". Payloads are E2E-encrypted between the client and the server for transport and auth, but decrypted at the router for offline persistence and delivery tracking.
 * **Persistent Offline Queues**: Uses SQLite in WAL (Write-Ahead-Log) mode with a thread-safe single-writer routing engine. Messages sent to offline users are securely queued and instantly drained upon login.
 * **Replay & Tamper Resistance**: Enforces a strict 5-minute sliding timestamp window and tracks `message_id` deduplication to actively reject MITM replay attacks. Any bit-flips in the AES-256-GCM ciphertexts instantly raise `InvalidTag` exceptions.
 * **Live Telemetry UI**: A fully-fledged Streamlit web dashboard ("Crypto Inspector") that plots exact byte-sizes and latency overhead per message.
@@ -52,4 +53,4 @@ To properly demonstrate the system-level novelty:
 2. **Show the Post-Quantum Upgrade**: Switch the mode to `ml_kem`. Send another message. The math is astonishingly fast, but point out the massive bandwidth penalty (the payload jumps to over 2,000 Bytes due to large PQ public keys).
 3. **Show the Hybrid Standard**: Switch to `hybrid`. Explain that this mode mixes classical and PQ keys to ensure safety even if the new NIST standard is mathematically broken in the future.
 4. **Show Offline Routing**: Open an Incognito Window and log in as `bob`. Bob will instantly receive all three messages directly from his offline SQLite queue.
-5. **Show Tamper Resistance**: You can run `pytest tests/` to show 100% test coverage proving that tampered packets and replayed message IDs are hard-rejected by the backend.
+5. **Show Tamper Resistance**: You can run `pytest tests/` to demonstrate that tampered packets and replayed message IDs are hard-rejected by the backend's cryptographic validators.

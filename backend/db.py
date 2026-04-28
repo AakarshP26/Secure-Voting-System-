@@ -41,7 +41,7 @@ from pathlib import Path
 # Configuration
 # ------------------------------------------------------------------
 
-DB_FILE = Path("chat.db")
+DB_FILE = Path(__file__).resolve().parent.parent / "chat.db"
 REPLAY_WINDOW_SECONDS = 300   # 5-minute window for replay detection
 
 

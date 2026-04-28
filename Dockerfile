@@ -25,9 +25,15 @@ EXPOSE 8501
 RUN echo '#!/bin/bash\n\
 echo "Starting Quantum-Secure Messaging Platform..."\n\
 # Seed the database with two demo users\n\
-python backend/register.py --user alice --password secret\n\
-python backend/register.py --user bob --password secret\n\
-echo "[OK] Demo users alice and bob registered (password: secret)"\n\
+alice_status=0\n\
+python backend/register.py --user alice --password secret || alice_status=\$?\n\
+bob_status=0\n\
+python backend/register.py --user bob --password secret || bob_status=\$?\n\
+if [ "$alice_status" -eq 0 ] && [ "$bob_status" -eq 0 ]; then\n\
+  echo "[OK] Demo users alice and bob registered (password: secret)"\n\
+else\n\
+  echo "[INFO] Demo users already exist or registration failed (proceeding...)"\n\
+fi\n\
 \n\
 # Start FastAPI backend in the background\n\
 uvicorn backend.server_async:app --host 0.0.0.0 --port 65432 &\n\

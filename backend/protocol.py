@@ -162,7 +162,7 @@ def validate(payload: dict) -> Optional[str]:
     if "seq" in payload and not isinstance(payload["seq"], int):
         return "seq must be an integer"
 
-    if payload["type"] not in vars(MsgType).values():
+    if payload["type"] not in {MsgType.CHAT, MsgType.AUTH, MsgType.ACK, MsgType.ERROR, MsgType.SYSTEM}:
         return f"Unknown message type: {payload['type']!r}"
 
     return None  # valid

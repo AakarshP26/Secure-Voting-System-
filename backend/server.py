@@ -147,6 +147,11 @@ def handle_client(conn: socket.socket, addr: tuple, mode: str,
                                       f"Message age {age:.1f}s exceeds window"))))
                 continue
 
+            if payload["type"] != proto.MsgType.CHAT:
+                send_msg(conn, aes_encrypt(aes_key, proto.encode(
+                    proto.build_error(proto.ErrCode.INVALID_SCHEMA, "Only CHAT messages are accepted from clients"))))
+                continue
+
             # Replay dedup
             msg_id = payload["message_id"]
             if db.is_replay(msg_id):

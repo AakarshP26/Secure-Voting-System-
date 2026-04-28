@@ -41,10 +41,9 @@ def wait_for_server(timeout_s: float = 60.0) -> None:
 
 def run_client(mode: str) -> dict:
     """Run client in --quiet mode and parse the metrics line it prints."""
-    actual_mode = "dh" if mode == "dh_cached" else mode
     proc = subprocess.run(
         [PYTHON, "backend/client_async.py",
-         "--mode", actual_mode,
+         "--mode", mode,
          "--user", "alice",
          "--password", "secret",
          "--to", "bob",
