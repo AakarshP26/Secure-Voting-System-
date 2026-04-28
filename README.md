@@ -1,69 +1,116 @@
-# Secure Voting System
+# Quantum-Secure Messaging & PQC Evaluation Platform
 
-A client-server voting system that demonstrates core cryptographic and network security
-concepts: **Diffie-Hellman key exchange**, **AES-256 symmetric encryption**, and
-**HMAC-SHA256** for message integrity.
+[![Tests](https://img.shields.io/badge/tests-27%20passed-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.12-blue)]()
+[![Status](https://img.shields.io/badge/build-phase%202%20complete-orange)]()
+[![Security](https://img.shields.io/badge/crypto-ML--KEM--768%20%2B%20X25519-red)]()
 
-Built as a coursework project for Network Programming & Security / Cryptography.
-
----
-
-## Motivation
-
-Real-world voting systems, messaging apps, and HTTPS all rely on the same fundamental
-building blocks: a key exchange protocol to establish a shared secret, a symmetric cipher
-to encrypt data efficiently, and a hash-based authentication code to detect tampering.
-
-This project implements those building blocks from the ground up — wired into a
-working client-server application — to demonstrate *why* each piece exists and *how*
-they fit together.
+> A post-quantum secure messaging backend and cryptography evaluation platform.  
+> Implements NIST FIPS 203 ML-KEM-768, Hybrid X25519+ML-KEM, and Classical DH —  
+> with live benchmarking, structured authentication, and replay protection.
 
 ---
 
-## Features (Planned)
+## 🚦 Current Build Status
 
-- [ ] TCP client-server architecture with concurrent voter support
-- [ ] Diffie-Hellman key exchange to establish a shared session secret
-- [ ] SHA-256 key derivation from the DH shared secret
-- [ ] AES-256-CBC encryption of the vote payload
-- [ ] HMAC-SHA256 integrity verification (Encrypt-then-MAC construction)
-- [ ] Vote tally with per-session logging
-- [ ] Unit tests for every cryptographic primitive
-
----
-
-## Protocol Overview
-CLIENT                                         SERVER
-| --- TCP connect ----------------------------> |
-| <-- DH params (p, g) + server public key A -- |
-| --- client public key B -------------------->|
-|                                               |
-|       [both derive shared secret S]           |
-|       [AES key K = SHA-256(S)]                |
-|                                               |
-| --- IV || ciphertext || HMAC_tag ----------> |
-| <-- encrypted ACK -------------------------- |
-Full protocol specification: see [`docs/protocol.md`](docs/protocol.md) *(coming soon)*.
+| Phase | Status | Description |
+|---|---|---|
+| **Phase 0** | ✅ Complete | Repository restructure — `backend/` scaffold, imports fixed |
+| **Phase 1** | ✅ Complete | JSON protocol layer — structured payloads, schema validation |
+| **Phase 2** | ✅ Complete | SQLite persistence, bcrypt auth, session tokens, replay protection |
+| **Phase 3** | 🔄 In progress | Message router, ACK system, offline queue |
+| **Phase 4** | ⏳ Pending | FastAPI + WebSocket migration |
+| **Phase 5** | ⏳ Pending | Streamlit frontend + Crypto Inspector dashboard |
+| **Phase 6** | ⏳ Pending | Docker + deployment |
 
 ---
 
-## Tech Stack
+## What this project is
 
-- **Language:** Python 3.12
-- **Cryptography:** [`cryptography`](https://cryptography.io/) library
-- **Networking:** `socket` + `threading` (standard library)
+This is **not** a new cryptographic algorithm. It is a **system-level evaluation platform** that:
+
+1. Implements three key exchange modes on identical infrastructure (DH, ML-KEM-768, Hybrid X25519+ML-KEM)
+2. Runs them under realistic chat workloads with authentication, message routing, and replay protection
+3. Measures and compares handshake latency, wire size, and security guarantees side-by-side
+4. Simulates attacks (replay, tampering) to demonstrate why each layer of security exists
+
+> Correct framing: *"A post-quantum secure messaging platform and PQC evaluation system that makes the transition from classical to post-quantum cryptography concrete and measurable."*
 
 ---
 
-## Project Status
+## Architecture
 
-🚧 **Under active development.** See commit history and branches for progress.
+```
+backend/
+├── server.py          # TCP server — key exchange → auth → message routing
+├── client.py          # TCP client — connects, authenticates, sends messages
+├── register.py        # CLI tool — register users in the database
+├── protocol.py        # JSON schema — message types, builders, validators
+├── auth.py            # bcrypt password hashing, session token lifecycle
+├── db.py              # SQLite + single writer thread, WAL mode
+├── crypto/
+│   ├── ml_kem.py      # ML-KEM-768 (FIPS 203) — post-quantum KEM
+│   ├── hybrid.py      # Hybrid X25519 + ML-KEM combiner (IETF draft)
+│   ├── dh.py          # Classical 2048-bit Diffie-Hellman
+│   ├── aes.py         # AES-256-GCM authenticated encryption
+│   ├── kdf.py         # HKDF-SHA256 key derivation
+│   └── kex_handlers.py # Strategy pattern — pluggable key exchange
+└── utils/
+    └── protocol.py    # TCP framing — 4-byte length-prefixed messages
+
+src/                   # Original prototype (preserved, tests still pass)
+tests/                 # 27 unit tests — all green
+benchmarks/            # Automated harness, CSV output, matplotlib figures
+```
 
 ---
 
-## License
+## Security model
 
-MIT — see [LICENSE](LICENSE).
+| Layer | Implementation | Status |
+|---|---|---|
+| Key Exchange | Hybrid X25519 + ML-KEM-768 | ✅ |
+| Symmetric Encryption | AES-256-GCM | ✅ |
+| Key Derivation | HKDF-SHA256 | ✅ |
+| Password Storage | bcrypt (rounds=12) | ✅ |
+| Session Tokens | 256-bit random hex, 60-min expiry | ✅ |
+| Replay Protection | message_id dedup + 5-min timestamp window | ✅ |
+| Message Persistence | SQLite WAL, single writer thread | ✅ |
+| E2EE | ❌ Server-trusted model (E2EE is a defined future phase) |
+
+---
+
+## Quickstart
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Register a user
+python backend/register.py --user alice --password secret
+
+# Start the server (choose mode: dh | ml_kem | hybrid)
+python backend/server.py --mode hybrid
+
+# Send a message (in a second terminal)
+python backend/client.py --mode hybrid --user alice --password secret --message "Hello"
+
+# Run unit tests
+pytest tests/ -v
+```
+
+---
+
+## Benchmarks
+
+The existing benchmarking suite in `benchmarks/` measures handshake latency across all modes.
+
+| Mode | Median Handshake | Public Key Size | Quantum-Safe |
+|---|---|---|---|
+| DH (fresh params) | ~30,000 ms | ~256 B | ❌ |
+| DH (cached params) | ~5 ms | ~256 B | ❌ |
+| ML-KEM-768 | ~5 ms | 1,184 B | ✅ |
+| Hybrid X25519+ML-KEM | ~5 ms | 1,216 B | ✅ |
 
 ---
 
