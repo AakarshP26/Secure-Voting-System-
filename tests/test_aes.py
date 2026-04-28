@@ -106,3 +106,18 @@ def test_blob_structure():
 
     # Blob length: 12 (nonce) + len(plaintext) + 16 (tag)
     assert len(blob) == NONCE_SIZE_BYTES + len(plaintext) + 16
+
+
+def test_encrypt_empty_plaintext():
+    """AES-GCM can encrypt zero-byte messages (tag still provides integrity)."""
+    key = _fresh_key()
+    blob = encrypt(key, b"")
+    recovered = decrypt(key, blob)
+    assert recovered == b""
+
+
+def test_decrypt_too_short_blob_raises_value_error():
+    """Blobs shorter than nonce + tag (28 bytes) must be rejected immediately."""
+    key = _fresh_key()
+    with pytest.raises(ValueError, match="too short"):
+        decrypt(key, b"x" * 20)  # 20 < 28

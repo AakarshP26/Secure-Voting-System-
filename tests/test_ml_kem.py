@@ -53,3 +53,26 @@ def test_ciphertext_has_expected_size():
     ciphertext, _ = encapsulate(pk)
 
     assert len(ciphertext) == 1088
+
+
+def test_decapsulate_with_wrong_secret_key_returns_different_secret():
+    """
+    Decapsulating a ciphertext with a different (incorrect) secret key must
+    not recover the original shared secret.  ML-KEM has implicit rejection:
+    instead of raising an exception it returns a pseudorandom decoy value.
+    """
+    pk, _ = generate_keypair()
+    _, wrong_sk = generate_keypair()  # fresh unrelated keypair
+
+    ciphertext, client_secret = encapsulate(pk)
+    wrong_secret = decapsulate(wrong_sk, ciphertext)
+
+    assert wrong_secret != client_secret
+
+
+def test_generate_keypair_returns_distinct_keys_each_call():
+    """Every generate_keypair call must yield a fresh, independent keypair."""
+    pk1, sk1 = generate_keypair()
+    pk2, sk2 = generate_keypair()
+    assert pk1 != pk2
+    assert sk1 != sk2

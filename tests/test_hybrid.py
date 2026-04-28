@@ -15,6 +15,8 @@ from crypto.hybrid import (
     client_handshake,
     server_finalize,
     _combine_secrets,
+    x25519_generate_keypair,
+    x25519_derive_shared,
 )
 
 
@@ -76,3 +78,32 @@ def test_hybrid_is_deterministic_given_same_inputs():
     s1 = _combine_secrets(b"A" * 32, b"B" * 32)
     s2 = _combine_secrets(b"A" * 32, b"B" * 32)
     assert s1 == s2
+
+
+def test_x25519_keypair_pub_key_is_32_bytes():
+    """X25519 raw public keys must be exactly 32 bytes."""
+    _, pub_bytes = x25519_generate_keypair()
+    assert isinstance(pub_bytes, bytes)
+    assert len(pub_bytes) == 32
+
+
+def test_x25519_two_keypairs_produce_same_shared_secret():
+    """X25519 DH: both sides exchanging each other's public key must agree."""
+    priv_a, pub_a = x25519_generate_keypair()
+    priv_b, pub_b = x25519_generate_keypair()
+
+    secret_ab = x25519_derive_shared(priv_a, pub_b)
+    secret_ba = x25519_derive_shared(priv_b, pub_a)
+
+    assert secret_ab == secret_ba
+    assert len(secret_ab) == 32
+
+
+def test_server_generate_keys_contains_expected_fields():
+    """server_generate_keys must return all four expected key material fields."""
+    keys = server_generate_keys()
+    assert "ml_kem_pk" in keys
+    assert "ml_kem_sk" in keys
+    assert "x25519_priv" in keys
+    assert "x25519_pub" in keys
+    assert len(keys["x25519_pub"]) == 32

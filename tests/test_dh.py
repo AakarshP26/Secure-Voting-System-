@@ -74,3 +74,28 @@ def test_shared_secret_is_bytes_with_expected_length():
 
     assert isinstance(secret, bytes)
     assert len(secret) in (255, 256)
+
+
+def test_generate_keypair_returns_distinct_keys():
+    """Two generate_keypair calls must produce different key pairs."""
+    priv1, pub1 = generate_keypair(PARAMETERS)
+    priv2, pub2 = generate_keypair(PARAMETERS)
+
+    pub1_bytes = serialize_public_key(pub1)
+    pub2_bytes = serialize_public_key(pub2)
+    assert pub1_bytes != pub2_bytes
+
+
+def test_cross_party_secret_does_not_match_unrelated_party():
+    """
+    A shared secret derived from mismatched pairs (Alice's private key with
+    Charlie's public key) must differ from the legitimate Alice–Bob secret.
+    """
+    alice_priv, _ = generate_keypair(PARAMETERS)
+    _, bob_pub = generate_keypair(PARAMETERS)
+    _, charlie_pub = generate_keypair(PARAMETERS)
+
+    alice_bob_secret = derive_shared_secret(alice_priv, bob_pub)
+    alice_charlie_secret = derive_shared_secret(alice_priv, charlie_pub)
+
+    assert alice_bob_secret != alice_charlie_secret

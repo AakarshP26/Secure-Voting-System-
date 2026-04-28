@@ -51,3 +51,24 @@ def test_works_with_dh_sized_input():
     secret = b"\xAB" * 256
     key = derive_aes_key(secret)
     assert len(key) == 32
+
+
+def test_output_is_bytes():
+    """derive_aes_key must return bytes, not str or any other type."""
+    key = derive_aes_key(b"secret" * 8)
+    assert isinstance(key, bytes)
+
+
+def test_works_with_short_input():
+    """HKDF can expand even a single-byte secret to 32 bytes."""
+    key = derive_aes_key(b"\x42")
+    assert len(key) == AES_KEY_LENGTH
+
+
+def test_empty_info_string_differs_from_default():
+    """An explicit empty info string should produce a different key than the
+    default 'voting-system aes key' info string."""
+    secret = b"shared_secret" * 4
+    k_default = derive_aes_key(secret)
+    k_empty = derive_aes_key(secret, info=b"")
+    assert k_default != k_empty
