@@ -20,7 +20,7 @@
 | **Phase 2** | ✅ Complete | SQLite persistence, bcrypt auth, session tokens, replay protection |
 | **Phase 3** | ✅ Complete | Message router, ACK system, offline queue, interactive client |
 | **Phase 4** | ✅ Complete | FastAPI + WebSocket migration (asyncio) |
-| **Phase 5** | 🔄 In progress | Streamlit frontend + Crypto Inspector dashboard |
+| **Phase 5** | ✅ Complete | Streamlit frontend + Crypto Inspector dashboard |
 | **Phase 6** | ⏳ Pending | Docker + deployment |
 
 ---
@@ -97,6 +97,9 @@ python backend/client_async.py --mode hybrid --user alice --password secret --me
 
 # Or enter interactive REPL mode by omitting --message
 python backend/client_async.py --mode hybrid --user alice --password secret
+
+# Or start the Streamlit UI (recommended)
+streamlit run frontend/app.py
 
 # Run unit tests
 pytest tests/ -v

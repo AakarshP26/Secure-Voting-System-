@@ -132,16 +132,23 @@ def run_chat_client(mode: str, username: str, password: str,
             t_send_done = time.perf_counter_ns()
             log(f"[CLIENT] Sent message ({len(chat_enc)}B encrypted)")
             
-            raw_ack = recv_msg(s)
-            bytes_recv += 4 + len(raw_ack)
-            ack = proto.decode(aes_decrypt(aes_key, raw_ack))
-            t_ack = time.perf_counter_ns()
-            
-            if ack.get("type") == proto.MsgType.ERROR:
-                print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
-                sys.exit(1)
-
-            log(f"[CLIENT] Server ACK: status={ack.get('status')} ref={ack.get('ref_id','')[:8]}")
+            # Loop to consume any pending offline messages sent by the server
+            # until we get the ACK for our specific message.
+            while True:
+                raw_ack = recv_msg(s)
+                bytes_recv += 4 + len(raw_ack)
+                ack = proto.decode(aes_decrypt(aes_key, raw_ack))
+                
+                if ack.get("type") == proto.MsgType.ERROR:
+                    print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
+                    sys.exit(1)
+                
+                if ack.get("type") == proto.MsgType.ACK and ack.get("ref_id") == chat_payload["message_id"]:
+                    t_ack = time.perf_counter_ns()
+                    log(f"[CLIENT] Server ACK: status={ack.get('status')} ref={ack.get('ref_id','')[:8]}")
+                    break
+                elif ack.get("type") == proto.MsgType.CHAT:
+                    log(f"[CLIENT] Received offline message from {ack.get('from')}")
             
             s.close()
             t_end = time.perf_counter_ns()
