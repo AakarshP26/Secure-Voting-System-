@@ -9,7 +9,7 @@ import os
 import sys
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 from cryptography.exceptions import InvalidTag
 from crypto.aes import encrypt, decrypt, KEY_SIZE_BYTES, NONCE_SIZE_BYTES
