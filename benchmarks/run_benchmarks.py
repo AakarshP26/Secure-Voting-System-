@@ -1,15 +1,11 @@
 """
-run_benchmarks.py — Automated benchmark harness for the secure voting system.
+run_benchmarks.py — Automated benchmark harness for the secure chat system.
 
-Spawns the server in each --mode, runs N client connections per mode,
+Spawns the async server in each --mode, runs N client connections per mode,
 captures per-run metrics, and writes them all to a CSV file.
 
 Usage:
     python3.12 benchmarks/run_benchmarks.py --runs 30 --output benchmarks/results.csv
-    python3.12 benchmarks/run_benchmarks.py --modes dh_cached --runs 30 --output benchmarks/results_cached.csv
-
-The "dh_cached" pseudo-mode runs DH but launches the server with
---cache-params for realistic deployment measurement.
 
 Author: Aakarsh Prabhu
 """
@@ -24,8 +20,6 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVER_SCRIPT = REPO_ROOT / "src" / "server.py"
-CLIENT_SCRIPT = REPO_ROOT / "src" / "client.py"
 PYTHON = sys.executable
 
 MODES = ["ml_kem", "hybrid", "dh", "dh_cached"]
@@ -49,28 +43,36 @@ def run_client(mode: str) -> dict:
     """Run client in --quiet mode and parse the metrics line it prints."""
     actual_mode = "dh" if mode == "dh_cached" else mode
     proc = subprocess.run(
-        [PYTHON, str(CLIENT_SCRIPT),
+        [PYTHON, "backend/client_async.py",
          "--mode", actual_mode,
-         "--auto-vote", "Bob",
+         "--user", "alice",
+         "--password", "secret",
+         "--to", "bob",
+         "--message", "benchmark",
          "--quiet"],
+        cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
         timeout=120,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"Client failed (rc={proc.returncode}): {proc.stderr}")
+        raise RuntimeError(f"Client failed (rc={proc.returncode}): {proc.stderr}\n{proc.stdout}")
 
     line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     if not line:
-        raise RuntimeError(f"Client produced no metrics line. stderr: {proc.stderr}")
+        raise RuntimeError(f"Client produced no metrics line. stderr: {proc.stderr}\n{proc.stdout}")
 
     metrics = {}
     for kv in line.split(","):
-        k, v = kv.split("=", 1)
         try:
-            metrics[k] = float(v)
-        except ValueError:
-            metrics[k] = v
+            k, v = kv.split("=", 1)
+            try:
+                metrics[k] = float(v)
+            except ValueError:
+                metrics[k] = v
+        except Exception:
+            pass
+            
     # Override mode field so the CSV preserves the dh_cached distinction.
     metrics["mode"] = mode
     return metrics
@@ -85,27 +87,29 @@ def benchmark_mode(mode: str, runs: int) -> list[dict]:
     for i in range(runs):
         print(f"  [{mode}] run {i + 1}/{runs} ...", end="", flush=True)
 
-        # Build server command line — dh_cached spawns DH server with --cache-params.
-        actual_mode = "dh" if mode == "dh_cached" else mode
-        server_args = [PYTHON, str(SERVER_SCRIPT), "--mode", actual_mode]
-        if mode == "dh_cached":
-            server_args.append("--cache-params")
+        # Build server command line
+        # Notice: server_async.py does not take arguments directly anymore, it's a FastAPI app.
+        # But wait, how do we pass dh_cached to FastAPI? 
+        # In server_async.py, dh_cached is not supported natively via CLI args like server.py.
+        # So we just run standard dh, ml_kem, hybrid.
+        server_args = [PYTHON, "-m", "uvicorn", "backend.server_async:app", "--host", SERVER_HOST, "--port", str(SERVER_PORT)]
 
         server_proc = subprocess.Popen(
             server_args,
+            cwd=str(REPO_ROOT),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 
         try:
-            # For dh_cached, wait longer because the server pre-generates params at startup.
-            timeout = 120.0 if mode == "dh_cached" else 60.0
-            wait_for_server(timeout_s=timeout)
+            wait_for_server(timeout_s=30.0)
 
             metrics = run_client(mode)
             metrics["run_id"] = i
             results.append(metrics)
-            print(f" handshake={metrics['handshake_ms']:.1f}ms, total={metrics['total_ms']:.1f}ms")
+            print(f" handshake={metrics.get('handshake_ms', 0):.1f}ms, total={metrics.get('total_ms', 0):.1f}ms")
+        except Exception as e:
+            print(f" FAILED: {e}")
         finally:
             server_proc.terminate()
             try:
@@ -117,12 +121,12 @@ def benchmark_mode(mode: str, runs: int) -> list[dict]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark secure voting modes")
+    parser = argparse.ArgumentParser(description="Benchmark secure chat modes")
     parser.add_argument("--runs", type=int, default=30,
                         help="Number of runs per mode (default: 30)")
     parser.add_argument("--output", type=str, default="benchmarks/results.csv",
                         help="CSV output path")
-    parser.add_argument("--modes", nargs="+", choices=MODES, default=MODES,
+    parser.add_argument("--modes", nargs="+", choices=["ml_kem", "hybrid", "dh"], default=["ml_kem", "hybrid", "dh"],
                         help="Which modes to benchmark")
     args = parser.parse_args()
 
@@ -143,8 +147,8 @@ def main() -> None:
         print("\nNo results collected; aborting.")
         sys.exit(1)
 
-    columns = ["mode", "run_id", "vote",
-               "connect_ms", "handshake_ms", "encrypt_send_ms", "ack_ms",
+    columns = ["mode", "run_id", "message_id",
+               "connect_ms", "handshake_ms", "auth_ms", "encrypt_send_ms", "ack_ms",
                "total_ms", "bytes_sent_app", "bytes_received_app"]
 
     with open(output_path, "w", newline="") as f:

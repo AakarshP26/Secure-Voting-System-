@@ -90,7 +90,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        asyncio.run(async_main(args.mode, args.user, args.password, args.to, args.message, args.quiet))
+        metrics = asyncio.run(async_main(args.mode, args.user, args.password, args.to, args.message, args.quiet))
+        if args.quiet and metrics:
+            print(",".join(f"{k}={v}" for k, v in metrics.items()))
     except KeyboardInterrupt:
         print("\n[CLIENT] Cancelled.")
 
