@@ -21,7 +21,17 @@
 | **Phase 3** | ✅ Complete | Message router, ACK system, offline queue, interactive client |
 | **Phase 4** | ✅ Complete | FastAPI + WebSocket migration (asyncio) |
 | **Phase 5** | ✅ Complete | Streamlit frontend + Crypto Inspector dashboard |
-| **Phase 6** | ⏳ Pending | Docker + deployment |
+| **Phase 6** | ✅ Complete | Docker + deployment |
+
+---
+
+## Docker Deployment (Recommended)
+You can run the entire platform (backend, frontend, database) with a single command:
+```bash
+docker build -t secure-chat .
+docker run -p 8501:8501 -p 65432:65432 secure-chat
+```
+The container automatically provisions two demo users (`alice` and `bob`, password: `secret`). Navigate to `http://localhost:8501` to view the app!
 
 ---
 
