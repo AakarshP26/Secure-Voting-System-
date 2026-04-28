@@ -64,7 +64,8 @@ def _listen_loop(s: socket.socket, aes_key: bytes, quiet: bool) -> None:
 
 def run_chat_client(mode: str, username: str, password: str,
                     recipient: str, message: str = None,
-                    quiet: bool = False) -> dict | None:
+                    quiet: bool = False,
+                    sock=None) -> dict | None:
     """
     Full secure message flow. If 'message' is provided, sends one and returns metrics.
     If 'message' is None, enters an interactive REPL loop.
@@ -78,12 +79,17 @@ def run_chat_client(mode: str, username: str, password: str,
             print(msg)
 
     t0 = time.perf_counter_ns()
+    t_connected = t0
 
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        log(f"[CLIENT] Connecting to {HOST}:{PORT} (mode={mode})...")
-        s.connect((HOST, PORT))
-        t_connected = time.perf_counter_ns()
+        if sock:
+            s = sock
+            log(f"[CLIENT] Using provided WebSocket adapter (mode={mode})...")
+        else:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            log(f"[CLIENT] Connecting to {HOST}:{PORT} (mode={mode})...")
+            s.connect((HOST, PORT))
+            t_connected = time.perf_counter_ns()
 
         # ── Mode marker ───────────────────────────────────────────
         mode_bytes = mode.encode("utf-8")
@@ -124,11 +130,18 @@ def run_chat_client(mode: str, username: str, password: str,
             send_msg(s, chat_enc)
             bytes_sent += 4 + len(chat_enc)
             t_send_done = time.perf_counter_ns()
+            log(f"[CLIENT] Sent message ({len(chat_enc)}B encrypted)")
             
             raw_ack = recv_msg(s)
             bytes_recv += 4 + len(raw_ack)
             ack = proto.decode(aes_decrypt(aes_key, raw_ack))
             t_ack = time.perf_counter_ns()
+            
+            if ack.get("type") == proto.MsgType.ERROR:
+                print(f"[ERROR] Server rejected: {ack.get('data')}", file=sys.stderr)
+                sys.exit(1)
+
+            log(f"[CLIENT] Server ACK: status={ack.get('status')} ref={ack.get('ref_id','')[:8]}")
             
             s.close()
             t_end = time.perf_counter_ns()

@@ -19,8 +19,8 @@
 | **Phase 1** | ✅ Complete | JSON protocol layer — structured payloads, schema validation |
 | **Phase 2** | ✅ Complete | SQLite persistence, bcrypt auth, session tokens, replay protection |
 | **Phase 3** | ✅ Complete | Message router, ACK system, offline queue, interactive client |
-| **Phase 4** | 🔄 In progress | FastAPI + WebSocket migration |
-| **Phase 5** | ⏳ Pending | Streamlit frontend + Crypto Inspector dashboard |
+| **Phase 4** | ✅ Complete | FastAPI + WebSocket migration (asyncio) |
+| **Phase 5** | 🔄 In progress | Streamlit frontend + Crypto Inspector dashboard |
 | **Phase 6** | ⏳ Pending | Docker + deployment |
 
 ---
@@ -89,11 +89,14 @@ pip install -r requirements.txt
 # Register a user
 python backend/register.py --user alice --password secret
 
-# Start the server (choose mode: dh | ml_kem | hybrid)
-python backend/server.py --mode hybrid
+# Start the FastAPI server (supports dh, ml_kem, hybrid routes)
+uvicorn backend.server_async:app --host 127.0.0.1 --port 65432
 
-# Send a message (in a second terminal)
-python backend/client.py --mode hybrid --user alice --password secret --message "Hello"
+# Send a message via WebSocket (in a second terminal)
+python backend/client_async.py --mode hybrid --user alice --password secret --message "Hello"
+
+# Or enter interactive REPL mode by omitting --message
+python backend/client_async.py --mode hybrid --user alice --password secret
 
 # Run unit tests
 pytest tests/ -v
