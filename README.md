@@ -164,8 +164,8 @@ Open `http://localhost:8501`. Credentials: `alice` / `secret` and `bob` / `secre
 # Run 50 iterations of PQC modes (fast, ~3 minutes)
 python benchmarks/run_benchmarks.py --runs 50 --modes ml_kem hybrid --output benchmarks/results_pqc.csv
 
-# Run 5 iterations of DH (slow, ~10+ minutes per run)
-python benchmarks/run_benchmarks.py --runs 5 --modes dh --output benchmarks/results_dh.csv
+# Run 6 iterations of DH (slow, ~10+ minutes per run)
+python benchmarks/run_benchmarks.py --runs 6 --modes dh --output benchmarks/results_dh.csv
 
 # Generate comparison graph
 python benchmarks/plot_results.py
