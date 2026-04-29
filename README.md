@@ -72,7 +72,7 @@ Every message is encrypted with **AES-256-GCM** regardless of which key exchange
 
 ## 📊 Benchmark Results
 
-Collected from 100+ automated iterations (50× ML-KEM, 50× Hybrid, 6× DH).
+Collected from 100+ automated iterations (50× ML-KEM, 50× Hybrid, 5× DH).
 
 | Mode | Avg. Handshake | Avg. Total | App-Layer Bytes |
 | :--- | ---: | ---: | ---: |
