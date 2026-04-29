@@ -114,21 +114,17 @@ The server maintains a `seen_messages` table and rejects any message whose ID ha
 **Requirements**: Python 3.12+
 
 ```bash
-# 1. Clone
-git clone https://github.com/AakarshP26/Secure-Voting-System-
-cd Secure-Voting-System-
-
-# 2. Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# 3. Register demo users
+# 2. Register demo users
 python backend/register.py --user alice --password secret
 python backend/register.py --user bob   --password secret
 
-# 4. Start backend (keep this terminal open)
+# 3. Start backend (keep this terminal open)
 uvicorn backend.server_async:app --host 127.0.0.1 --port 65432
 
-# 5. Start frontend (new terminal)
+# 4. Start frontend (new terminal)
 streamlit run frontend/app.py
 ```
 
