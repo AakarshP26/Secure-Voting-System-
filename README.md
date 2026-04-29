@@ -1,6 +1,6 @@
 # Post-Quantum Secure Messaging Testbed
 
-A production-inspired, end-to-end encrypted messaging platform built to **measure, compare, and visualize the performance tradeoffs** of migrating from classical cryptography (Diffie-Hellman) to NIST Post-Quantum standards (ML-KEM / FIPS 203).
+A production-inspired, transport-encrypted messaging platform built to **measure, compare, and visualize the performance tradeoffs** of migrating from classical cryptography (Diffie-Hellman) to NIST Post-Quantum standards (ML-KEM / FIPS 203).
 
 > **Positioning**: This is a *research testbed*, not a production chat application. Its value lies in the empirical data it produces and the architectural decisions it demonstrates.
 
