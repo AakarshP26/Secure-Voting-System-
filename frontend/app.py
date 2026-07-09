@@ -14,8 +14,11 @@ import html
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import streamlit.components.v1 as components
+
 from backend.client_async import async_main
 from dashboard import render_dashboard
+from encryption_lab import get_encryption_lab_html
 
 st.set_page_config(
     page_title="Post-Quantum Secure Messaging",
@@ -130,6 +133,31 @@ def _inject_styles() -> None:
     st.markdown(
         """
         <style>
+        /* ---- global app polish ---- */
+        .stApp {
+            background:
+              radial-gradient(1100px 480px at 12% -8%, #16224022, transparent),
+              radial-gradient(900px 480px at 100% 0%, #2a114633, transparent),
+              #070b16;
+        }
+        .block-container { padding-top: 2.2rem; max-width: 1400px; }
+        h1, h2, h3 { letter-spacing: -0.4px; }
+        .stTabs [data-baseweb="tab-list"] { gap: 6px; }
+        .stTabs [data-baseweb="tab"] {
+            background: #0e1628; border: 1px solid #22304d; border-radius: 10px 10px 0 0;
+            padding: 8px 16px; font-weight: 600;
+        }
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(180deg, #1b1140, #14102e);
+            border-color: #7c3aed; color: #e9d5ff;
+        }
+        .stButton > button, .stFormSubmitButton > button {
+            border-radius: 10px; font-weight: 600; border: 1px solid #2b3a5c;
+        }
+        div[data-testid="stMetric"] {
+            background: linear-gradient(180deg, #0e1628, #111c34);
+            border: 1px solid #22304d; border-radius: 12px; padding: 12px 14px;
+        }
         .flow-wrap { font-family: system-ui, sans-serif; margin: 6px 0 12px 0; }
         .flow-title { font-size: 0.84rem; color: #94a3b8; margin-bottom: 6px; }
         .flow-track {
@@ -382,9 +410,20 @@ else:
             st.session_state.flow_stage = -1
             st.rerun()
 
-    tab_demo, tab_bench, tab_about = st.tabs(
-        ["💬 Live Demo", "📊 Benchmark Dashboard", "🛡️ How It Works"]
+    tab_lab, tab_demo, tab_bench, tab_about = st.tabs(
+        ["🔐 Encryption Lab", "💬 Live Demo", "📊 Benchmark Dashboard", "🛡️ How It Works"]
     )
+
+    with tab_lab:
+        st.caption(
+            "Watch a message become ciphertext, byte by byte — real AES-256-GCM via the "
+            "browser Web Crypto API, using the same scheme as the backend."
+        )
+        components.html(
+            get_encryption_lab_html("Vote: Alice for President", mode),
+            height=1720,
+            scrolling=True,
+        )
 
     with tab_demo:
         if st.session_state.send_error:
