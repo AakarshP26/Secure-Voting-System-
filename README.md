@@ -64,7 +64,8 @@ Every message is encrypted with **AES-256-GCM** regardless of which key exchange
 - **Session tokens** issued post-authentication
 - **Replay protection** via `message_id` deduplication with a 5-minute sliding window
 - **Offline message queue**: messages to offline users are stored in SQLite and drained immediately on their next login
-- **Streamlit Crypto Inspector**: live latency and byte-size dashboard per message
+- **Streamlit Crypto Inspector**: animated packet-flow view of every message (plaintext → encrypted → server → peer → ACK)
+- **Interactive Benchmark Dashboard**: in-app Altair charts comparing classical vs. post-quantum latency, live from the CSV data (log-scale handshake comparison, per-stage breakdown, run-to-run consistency)
 - **Automated benchmark harness**: 100+ runs per mode, CSV output, matplotlib plots
 - **Replay attack simulator**: programmatic proof of tamper resistance
 
@@ -147,10 +148,11 @@ Open `http://localhost:8501`. Credentials: `alice` / `secret` and `bob` / `secre
 ## 🎮 Usage / Demo Guide
 
 1. **Login** at `http://localhost:8501` as `alice` (password: `secret`).
-2. **Select a Key Exchange Mode** from the sidebar dropdown (`dh`, `ml_kem`, `hybrid`).
-3. **Send a message** to `bob`. Watch the **Crypto Inspector** panel populate with handshake latency and byte counts.
-4. **Open an Incognito window**, log in as `bob` — offline messages arrive instantly from the queue.
-5. **Switch modes** between messages to directly compare the telemetry values.
+2. On the **💬 Live Demo** tab, **select a Key Exchange Mode** from the dropdown (`dh`, `ml_kem`, `hybrid`).
+3. **Send a message** to `bob`. Watch the animated **Network** and **Crypto** panels light up as each stage runs.
+4. Open the **📊 Benchmark Dashboard** tab to see the classical-vs-post-quantum performance gap rendered as interactive charts (ML-KEM is ~45,000× faster than fresh-parameter DH).
+5. Open the **🛡️ How It Works** tab for a plain-English breakdown of the three modes and the message pipeline.
+6. **Open an Incognito window**, log in as `bob` — offline messages arrive instantly from the queue.
 
 ---
 
